@@ -8,6 +8,7 @@ from telegram.ext import (
     Updater, CommandHandler, CallbackQueryHandler, CallbackContext,
     JobQueue
 )
+from queue import Queue
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
