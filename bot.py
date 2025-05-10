@@ -152,7 +152,8 @@ def main() -> None:
     if not token:
         raise ValueError("Please set the TELEGRAM_BOT_TOKEN environment variable")
     
-    updater = Updater(token)
+    update_queue = Queue()
+    updater = Updater(token=token, update_queue=update_queue)
     dispatcher = updater.dispatcher
 
     # Register commands
