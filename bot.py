@@ -2,6 +2,7 @@ import os
 import logging
 from datetime import time
 import requests
+import re
 from bs4 import BeautifulSoup
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -27,8 +28,7 @@ async def fetch_latest_article():
         response = requests.get(BASE_URL)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
-        
-        article_link = soup.find('a', class_='listing-block__item__title')['href']
+        article_link = soup.find('a', class_='articleLink-2OMNo')['href']
         if not article_link.startswith('http'):
             article_link = BASE_URL + article_link
         
@@ -36,22 +36,55 @@ async def fetch_latest_article():
         article_response.raise_for_status()
         article_soup = BeautifulSoup(article_response.text, 'html.parser')
         
-        title = article_soup.find('h1', class_='article-header__title').get_text(strip=True)
-        summary = article_soup.find('div', class_='article-header__dek').get_text(strip=True)
-        content = " ".join([p.get_text(strip=True) for p in article_soup.find_all('p', class_='article-text')])
+        title = article_soup.find('h1', class_='article_hed-9vUZD').get_text(strip=True)
+        summary = article_soup.find('div', class_='body-n28ll prose-Yw0x0 prose-v4bYC article__body-ivA3W').get_text(strip=True)
+        article_body = article_soup.find('div', class_='body-n28ll prose-Yw0x0 prose-v4bYC article__body-ivA3W')
+        content = " ".join([p.get_text(strip=True) for p in article_body.find_all('p')])
+
+        raw_words = content.split()[:20]
+        clean_words = []
         
-        words = content.split()[:20]
-        key_words = list(set([word.lower() for word in words if len(word) > 5]))[:5]
+        for word in raw_words:
+            clean_word = re.sub(r"[^\w']", '', word.lower())
+            
+            if len(clean_word) > 5:
+                clean_words.append(clean_word)
+
+        key_words = list(set(clean_words))[:5]
+        #words = content.split()[:20]
+        #key_words = list(set([word.lower() for word in words if len(word) > 5]))[:5]
         
         definitions = {}
+        key = os.getenv('X-RapidAPI-Key')
+        headers = {
+            "X-RapidAPI-Key": f"{key}",
+            "X-RapidAPI-Host": "wordsapiv1.p.rapidapi.com"
+        }
         for word in key_words:
-            definitions[word] = f"Definition of {word} would appear here (from Oxford dictionary)"
-        
+            freq_url = f"https://wordsapiv1.p.rapidapi.com/words/{word}/frequency"
+            freq_resp = requests.get(freq_url, headers=headers)
+
+            if freq_resp.status_code == 200:
+                freq_data = freq_resp.json().get("frequency", {})
+                zipf = freq_data.get("zipf", 0)
+                diversity = freq_data.get("diversity", 1)
+
+                if zipf <= 4.5 and diversity <= 0.3:
+                    url = f"https://wordsapiv1.p.rapidapi.com/words/{word}/definitions"
+                    response = requests.get(url, headers=headers)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        defs = data.get("definitions", [])
+                        
+                        if defs:
+                            definitions[word] = [d['definition'] for d in defs[:3]]
+                        else:
+                            definitions[word] = "No definition found."
+                
         return {
             "title": title,
-            "summary": summary,
             "link": article_link,
-            "content": content[:1000] + "..." if len(content) > 1000 else content,
             "key_words": definitions
         }
     except Exception as e:
@@ -85,11 +118,18 @@ async def send_daily_article(context: ContextTypes.DEFAULT_TYPE) -> None:
     
     user_articles[job.chat_id] = {"article": article, "read": False}
     
-    key_words_text = "\n".join([f"• {word}: {definition}" for word, definition in article["key_words"].items()])
+    key_words_text = ""
+
+    for word, defs in article["key_words"].items():
+        if isinstance(defs, list):
+            definitions_formatted = "\n".join([f"   {i+1}. {definition}" for i, definition in enumerate(defs)])
+        else:
+            definitions_formatted = f"   {defs}"
+    
+        key_words_text += f"• *{word}*:\n{definitions_formatted}\n\n"
     
     message = (
         f"📚 *{article['title']}*\n\n"
-        f"{article['summary']}\n\n"
         f"*Key Words:*\n{key_words_text}\n\n"
         f"[Read full article]({article['link']})"
     )
